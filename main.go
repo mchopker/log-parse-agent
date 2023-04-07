@@ -361,7 +361,7 @@ func tailLogsHandler(c *gin.Context) {
 				return
 			}
 
-			err := tailLogs(cmdKey, logFile, c)
+			err := tailLogs(cmdKey, searchData, c)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				log.Printf("API:%s, Error:%s \n", c.Request.URL.Path, err.Error())
@@ -456,14 +456,14 @@ func findMatchLines(cmdKey string, searchData apiInputData, c *gin.Context) erro
 }
 
 // find matched lines
-func tailLogs(cmdKey, logToTail string, c *gin.Context) error {
+func tailLogs(cmdKey string, searchData apiInputData, c *gin.Context) error {
 	cmd := "tail"
 	args := []string{}
 	args = append(args, "-f")
-	args = append(args, logToTail)
+	args = append(args, searchData.LogFiles[0])
 	log.Printf("Executing request for cmd:%s, args:%v \n", cmd, args)
 	//set timeout 1 minute
-	err := executeOSCommandAndRender(cmdKey, cmd, args, 1, c)
+	err := executeOSCommandAndRender(cmdKey, cmd, args, searchData.SearchTimeout, c)
 	return err
 }
 
