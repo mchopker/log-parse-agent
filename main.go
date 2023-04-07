@@ -1,5 +1,5 @@
 // log-parse-agent listens for log parse/tail request from client and responds with the corresponding output.
-// what application and log files to suppport is configured in the config file.
+// what application and log files to support is configured in the config file.
 // the agent also supports sharing this config periodically to a central server (which becomes the client for this agent).
 package main
 
@@ -34,14 +34,14 @@ type appConfiguration struct {
 	Active            bool     `json:"active"`
 }
 
-// config propeorteis supported by the agent
+// config properties supported by the agent
 type LogAgentConfig struct {
-	ServerURL               string             `json:"server-url"`
-	NoOfCocurrentReqAllowed int                `json:"no-of-concurrent-req-allowed"`
-	AgentHost               string             `json:"agent-host"`
-	AgentPort               string             `json:"agent-port"`
-	AgentInfoPostInterval   int                `json:"agent-info-post-interval-minutes"`
-	AppsSupported           []appConfiguration `json:"apps-supported"`
+	ServerURL                string             `json:"server-url"`
+	NoOfConcurrentReqAllowed int                `json:"no-of-concurrent-req-allowed"`
+	AgentHost                string             `json:"agent-host"`
+	AgentPort                string             `json:"agent-port"`
+	AgentInfoPostInterval    int                `json:"agent-info-post-interval-minutes"`
+	AppsSupported            []appConfiguration `json:"apps-supported"`
 }
 
 // api output data structure
@@ -57,7 +57,7 @@ type apiInputData struct {
 	PreMatchLines  uint     `json:"pre-match-lines" validate:"gte=0,lte=9"`
 	PostMatchLines uint     `json:"post-match-lines" validate:"gte=0,lte=9"`
 	LogFiles       []string `json:"search-logs" validate:"required,min=1"`
-	SearchTimeout  uint     `json:"search-timeout-minute" validate:"gte=1,lte=5"`
+	SearchTimeout  uint     `json:"search-timeout-minute"`
 }
 
 var agentConfig LogAgentConfig
@@ -82,7 +82,7 @@ func init() {
 	if strings.EqualFold(agentConfig.AgentHost, "") {
 		agentConfig.AgentHost = hostname
 	}
-	log.Printf("Agent Config:%v", agentConfig)
+	log.Printf("Agent Config:%v\n", agentConfig)
 
 	//initialize
 	gin.SetMode(gin.ReleaseMode)
@@ -92,11 +92,11 @@ func init() {
 		//default to 30 minutes
 		agentConfig.AgentInfoPostInterval = 30
 	}
-	if agentConfig.NoOfCocurrentReqAllowed == 0 {
+	if agentConfig.NoOfConcurrentReqAllowed == 0 {
 		//default to 2
-		agentConfig.NoOfCocurrentReqAllowed = 2
+		agentConfig.NoOfConcurrentReqAllowed = 2
 	}
-	sem = *semaphore.NewWeighted(int64(agentConfig.NoOfCocurrentReqAllowed))
+	sem = *semaphore.NewWeighted(int64(agentConfig.NoOfConcurrentReqAllowed))
 
 	//identify files for the given log file pattern (if any)
 	for i, app := range agentConfig.AppsSupported {
@@ -112,16 +112,19 @@ func init() {
 		}
 		agentConfig.AppsSupported[i].Logs = tmpLogs
 	}
-	log.Printf("Agent Config Updated:%v", agentConfig)
+	log.Printf("Agent Config Updated:%v\n", agentConfig)
 
 	//scheduled task to post agent info periodically
 	if !strings.EqualFold(agentConfig.ServerURL, "") {
+		log.Printf("Posting Agent Config to Server:%s\n", agentConfig.ServerURL)
 		go func() {
 			for {
 				postAgentInfo()
 				time.Sleep(time.Duration(agentConfig.AgentInfoPostInterval) * time.Minute)
 			}
 		}()
+	} else {
+		log.Printf("No Server Configured for Agent Config Posting \n")
 	}
 
 }
@@ -130,18 +133,20 @@ func main() {
 	//set API route
 	router := gin.Default()
 
-	//register global handlers to control conncurrent request
+	//register global handlers to control concurrent request
 	router.Use(checkAllowableConcurrentReq)
 
 	router.GET("/api/logs/search/info", logSearchInfoHandler)
 	router.POST("/api/logs/search/files", validateSearchInput, checkAppAndLogFilesSupported, findMatchFilesHandler)
 	router.POST("/api/logs/search/lines", validateSearchInput, checkAppAndLogFilesSupported, findMatchLinesHandler)
-	router.POST("/api/logs/tail/files", validateTailInput, filterFilesForGivenPattern, tailLogsHandler)
+	router.POST("/api/logs/tail/files", validateTailInput, checkAppAndLogFilesSupported, tailLogsHandler)
 	router.POST("/api/logs/command/cancel", cmdCancelHandler)
 
 	router.NoRoute(func(c *gin.Context) {
 		c.JSON(404, gin.H{"code": "PAGE_NOT_FOUND", "message": "Not found"})
 	})
+
+	log.Printf("***********Agent Started at:%s:%s\n", agentConfig.AgentHost, agentConfig.AgentPort)
 
 	//RUN API SERVER
 	router.Run(agentConfig.AgentHost + ":" + agentConfig.AgentPort)
@@ -154,13 +159,14 @@ func checkAllowableConcurrentReq(c *gin.Context) {
 		return
 	}
 
-	ctx, _ := context.WithTimeout(context.TODO(), 1*time.Second)
+	ctx, cancel := context.WithTimeout(context.TODO(), 1*time.Second)
+	defer cancel()
 	// Acquire the semaphore
 	err := sem.Acquire(ctx, 1)
 	if err != nil {
-		//full and timedout
+		//full and time out
 		c.JSON(http.StatusTooManyRequests, gin.H{"error": "no. of concurrent requests allowed exhausted, please wait for previous operations to finish!"})
-		log.Printf("\nAPI:%s, Error:%v", c.Request.URL.Path, err)
+		log.Printf("\nAPI:%s, Error:%v\n", c.Request.URL.Path, err)
 		c.Abort()
 		return
 	}
@@ -193,7 +199,7 @@ func validateSearchInput(c *gin.Context) {
 
 	//populate variable, will be used validator & then by next handler
 	//note: searchTimeout is not sent by api requestor, it is used internally
-	inputData = apiInputData{App: searchApp, SearchText: searchText, LogFiles: searchFiles, IsRegEx: isRegEx, PreMatchLines: uint(preMatchTmp), PostMatchLines: uint(postMatchTmp), SearchTimeout: 1}
+	inputData = apiInputData{App: searchApp, SearchText: searchText, LogFiles: searchFiles, IsRegEx: isRegEx, PreMatchLines: uint(preMatchTmp), PostMatchLines: uint(postMatchTmp)}
 	log.Printf("API:%s, InputData:%v \n", c.Request.URL.Path, inputData)
 
 	//perform validation
@@ -242,6 +248,7 @@ func checkAppAndLogFilesSupported(c *gin.Context) {
 			if postMatchLines > appFound.PostMatchLinesMax {
 				inputData.PostMatchLines = 0
 			}
+			inputData.SearchTimeout = appFound.SearchTimeout
 			c.Set("InputData", inputData)
 
 			return
@@ -288,7 +295,7 @@ func findMatchFilesHandler(c *gin.Context) {
 	cmdKey := "grep" + strings.Join(searchData.LogFiles, "")
 	if isCmdAlreadyInProgress(cmdKey) {
 		msg := "Command already in-progress:" + cmdKey
-		log.Printf("%s", msg)
+		log.Printf("%s\n", msg)
 		c.JSON(http.StatusOK, msg)
 		return
 	}
@@ -380,29 +387,6 @@ func cmdCancelHandler(c *gin.Context) {
 }
 
 // handler to find latest file for the given pattern
-func filterFilesForGivenPattern(c *gin.Context) {
-	data, exist := c.Get("InputData")
-	if !exist {
-		return
-	}
-	searchData := data.(apiInputData)
-
-	logFiles := []string{}
-	for _, v := range searchData.LogFiles {
-		if strings.Contains(v, "*") {
-			if files, err := findLatestFileForGivenPattern(v); err == nil {
-				log.Printf("\nFor pattern:%s , found files:%v", v, files)
-				logFiles = append(logFiles, files...)
-			}
-		} else {
-			logFiles = append(logFiles, v)
-		}
-	}
-
-	searchData.LogFiles = logFiles
-	c.Set("InputData", searchData)
-}
-
 // find latest file for the given pattern
 func findLatestFileForGivenPattern(filePattern string) ([]string, error) {
 	filesFound := []string{}
@@ -427,14 +411,14 @@ func findLatestFileForGivenPattern(filePattern string) ([]string, error) {
 
 	op := string(out)
 	tmp := strings.Split(op, "\n")
-	log.Printf("Success!!, Executing... cmd:%s , args:%v \n, output:%s, parse:%v", command, args, op, tmp)
+	log.Printf("Success!!, Executing... cmd:%s , args:%v , output:%s, parse:%v \n", command, args, op, tmp)
 
 	if (len(tmp)) > 0 {
 		tmp = strings.Split(tmp[0], " ")
-		log.Printf("\n%v", tmp)
+		log.Printf("%v\n", tmp)
 		if len(tmp) > 0 {
 			fileName := tmp[len(tmp)-1]
-			log.Printf("\n%s", fileName)
+			log.Printf("%s\n", fileName)
 			filesFound = append(filesFound, fileName)
 		}
 	}
@@ -445,7 +429,7 @@ func findLatestFileForGivenPattern(filePattern string) ([]string, error) {
 func findMatchFileNames(cmdKey string, searchData apiInputData) (searchResult, error) {
 	cmd := "grep"
 	args := buildGrepArgs(searchData.SearchText, true, searchData.IsRegEx, searchData.PreMatchLines, searchData.PostMatchLines, searchData.LogFiles)
-	log.Printf("\nExecuting request for cmd:%s, args:%v", cmd, args)
+	log.Printf("Executing request for cmd:%s, args:%v \n", cmd, args)
 	op, err := executeOSCommand(cmdKey, cmd, args, searchData.SearchTimeout)
 	if err != nil {
 		return searchResult{}, err
@@ -466,7 +450,7 @@ func findMatchFileNames(cmdKey string, searchData apiInputData) (searchResult, e
 func findMatchLines(cmdKey string, searchData apiInputData, c *gin.Context) error {
 	cmd := "grep"
 	args := buildGrepArgs(searchData.SearchText, false, searchData.IsRegEx, searchData.PreMatchLines, searchData.PostMatchLines, searchData.LogFiles)
-	log.Printf("\nExecuting request for cmd:%s, args:%v", cmd, args)
+	log.Printf("Executing request for cmd:%s, args:%v \n", cmd, args)
 	err := executeOSCommandAndRender(cmdKey, cmd, args, searchData.SearchTimeout, c)
 	return err
 }
@@ -477,7 +461,7 @@ func tailLogs(cmdKey, logToTail string, c *gin.Context) error {
 	args := []string{}
 	args = append(args, "-f")
 	args = append(args, logToTail)
-	log.Printf("\nExecuting request for cmd:%s, args:%v", cmd, args)
+	log.Printf("Executing request for cmd:%s, args:%v \n", cmd, args)
 	//set timeout 1 minute
 	err := executeOSCommandAndRender(cmdKey, cmd, args, 1, c)
 	return err
@@ -533,7 +517,7 @@ func executeOSCommand(cmdKey, command string, args []string, timeout uint) (stri
 	return string(out), nil
 }
 
-// execute os command - with streaming and outut rendering
+// execute os command - with streaming and output rendering
 func executeOSCommandAndRender(cmdKey, command string, args []string, timeout uint, c *gin.Context) error {
 	ctx := context.Background()
 	var timeOutDuration time.Duration
@@ -576,7 +560,7 @@ func executeOSCommandAndRender(cmdKey, command string, args []string, timeout ui
 	//stream the output
 	//write first line as cmdKey.
 	c.Writer.Write([]byte(cmdKey + "\n"))
-	//then stream the datat
+	//then stream the data
 	c.Stream(func(w io.Writer) bool {
 		if msg, ok := <-opChan; ok {
 			outputBytes := bytes.NewBufferString(msg)
@@ -609,11 +593,6 @@ func postAgentInfo() {
 	if err != nil {
 		log.Printf("Error posting Agent Info: %s \n", err.Error())
 		return
-	}
-	//the local server url is protected with basic auth,
-	//the remote server url is not because that is behind a SSO proxy server
-	if strings.Contains(agentConfig.ServerURL, "127.0.0.1") {
-		req.SetBasicAuth("mchopker", "Avaya12345")
 	}
 	r, err := h.Do(req)
 	if err != nil {
