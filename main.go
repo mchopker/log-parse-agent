@@ -21,6 +21,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator"
 	"golang.org/x/exp/slices"
+	"golang.org/x/sync/semaphore"
 )
 
 // config properties for the app supported by the agent.
@@ -29,20 +30,18 @@ type appConfiguration struct {
 	SearchTimeout     uint     `json:"search-timeout-minute"`
 	PreMatchLinesMax  uint     `json:"pre-match-lines-max"`
 	PostMatchLinesMax uint     `json:"post-match-lines-max"`
-	SearchDuration    uint     `json:"search-duration"`
 	Logs              []string `json:"logs"`
 	Active            bool     `json:"active"`
-	AllowDownload     bool     `json:"allow-download"`
 }
 
 // config propeorteis supported by the agent
 type LogAgentConfig struct {
-	AgentHost             string             `json:"agent-host"`
-	AgentPort             string             `json:"agent-port"`
-	AgentInfoPostInterval int                `json:"agent-info-post-interval-minutes"`
-	UsersSupported        []string           `json:"users-supported"`
-	AppsSupported         []appConfiguration `json:"apps-supported"`
-	ServerURL             string             `json:"server-url"`
+	ServerURL               string             `json:"server-url"`
+	NoOfCocurrentReqAllowed int                `json:"no-of-concurrent-req-allowed"`
+	AgentHost               string             `json:"agent-host"`
+	AgentPort               string             `json:"agent-port"`
+	AgentInfoPostInterval   int                `json:"agent-info-post-interval-minutes"`
+	AppsSupported           []appConfiguration `json:"apps-supported"`
 }
 
 // api output data structure
@@ -66,11 +65,10 @@ var inputData apiInputData
 var validate *validator.Validate
 var cmdInProgress map[string]*exec.Cmd
 
-func init() {
-	//initialize
-	cmdInProgress = make(map[string]*exec.Cmd)
-	validate = validator.New()
+// semaphore to control no. of concurrent req can be served
+var sem semaphore.Weighted
 
+func init() {
 	//read config file
 	var content []byte
 	var err error
@@ -85,6 +83,20 @@ func init() {
 		agentConfig.AgentHost = hostname
 	}
 	log.Printf("Agent Config:%v", agentConfig)
+
+	//initialize
+	gin.SetMode(gin.ReleaseMode)
+	cmdInProgress = make(map[string]*exec.Cmd)
+	validate = validator.New()
+	if agentConfig.AgentInfoPostInterval == 0 {
+		//default to 30 minutes
+		agentConfig.AgentInfoPostInterval = 30
+	}
+	if agentConfig.NoOfCocurrentReqAllowed == 0 {
+		//default to 2
+		agentConfig.NoOfCocurrentReqAllowed = 2
+	}
+	sem = *semaphore.NewWeighted(int64(agentConfig.NoOfCocurrentReqAllowed))
 
 	//identify files for the given log file pattern (if any)
 	for i, app := range agentConfig.AppsSupported {
@@ -118,6 +130,9 @@ func main() {
 	//set API route
 	router := gin.Default()
 
+	//register global handlers to control conncurrent request
+	router.Use(checkAllowableConcurrentReq)
+
 	router.GET("/api/logs/search/info", logSearchInfoHandler)
 	router.POST("/api/logs/search/files", validateSearchInput, checkAppAndLogFilesSupported, findMatchFilesHandler)
 	router.POST("/api/logs/search/lines", validateSearchInput, checkAppAndLogFilesSupported, findMatchLinesHandler)
@@ -130,6 +145,28 @@ func main() {
 
 	//RUN API SERVER
 	router.Run(agentConfig.AgentHost + ":" + agentConfig.AgentPort)
+}
+
+// control no. of simultaneous requests
+func checkAllowableConcurrentReq(c *gin.Context) {
+	//if cancel operation request then ignore concurrent check
+	if strings.EqualFold(c.Request.URL.Path, "/api/logs/command/cancel") {
+		return
+	}
+
+	ctx, _ := context.WithTimeout(context.TODO(), 1*time.Second)
+	// Acquire the semaphore
+	err := sem.Acquire(ctx, 1)
+	if err != nil {
+		//full and timedout
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "no. of concurrent requests allowed exhausted, please wait for previous operations to finish!"})
+		log.Printf("\nAPI:%s, Error:%v", c.Request.URL.Path, err)
+		c.Abort()
+		return
+	}
+	defer sem.Release(1)
+	//do work
+	c.Next()
 }
 
 // API handler to return LogAgentInfo
@@ -186,6 +223,7 @@ func checkAppAndLogFilesSupported(c *gin.Context) {
 	var appFound appConfiguration
 	for _, v := range agentConfig.AppsSupported {
 		if strings.EqualFold(v.App, searchApp) && v.Active {
+			appFound = v
 			for _, f := range searchFiles {
 				if !slices.Contains(v.Logs, f) {
 					//found log file which is not supported
@@ -205,6 +243,7 @@ func checkAppAndLogFilesSupported(c *gin.Context) {
 				inputData.PostMatchLines = 0
 			}
 			c.Set("InputData", inputData)
+
 			return
 		}
 	}
@@ -406,6 +445,7 @@ func findLatestFileForGivenPattern(filePattern string) ([]string, error) {
 func findMatchFileNames(cmdKey string, searchData apiInputData) (searchResult, error) {
 	cmd := "grep"
 	args := buildGrepArgs(searchData.SearchText, true, searchData.IsRegEx, searchData.PreMatchLines, searchData.PostMatchLines, searchData.LogFiles)
+	log.Printf("\nExecuting request for cmd:%s, args:%v", cmd, args)
 	op, err := executeOSCommand(cmdKey, cmd, args, searchData.SearchTimeout)
 	if err != nil {
 		return searchResult{}, err
@@ -426,6 +466,7 @@ func findMatchFileNames(cmdKey string, searchData apiInputData) (searchResult, e
 func findMatchLines(cmdKey string, searchData apiInputData, c *gin.Context) error {
 	cmd := "grep"
 	args := buildGrepArgs(searchData.SearchText, false, searchData.IsRegEx, searchData.PreMatchLines, searchData.PostMatchLines, searchData.LogFiles)
+	log.Printf("\nExecuting request for cmd:%s, args:%v", cmd, args)
 	err := executeOSCommandAndRender(cmdKey, cmd, args, searchData.SearchTimeout, c)
 	return err
 }
@@ -436,6 +477,7 @@ func tailLogs(cmdKey, logToTail string, c *gin.Context) error {
 	args := []string{}
 	args = append(args, "-f")
 	args = append(args, logToTail)
+	log.Printf("\nExecuting request for cmd:%s, args:%v", cmd, args)
 	//set timeout 1 minute
 	err := executeOSCommandAndRender(cmdKey, cmd, args, 1, c)
 	return err
@@ -534,7 +576,7 @@ func executeOSCommandAndRender(cmdKey, command string, args []string, timeout ui
 	//stream the output
 	//write first line as cmdKey.
 	c.Writer.Write([]byte(cmdKey + "\n"))
-	//then stread the datat
+	//then stream the datat
 	c.Stream(func(w io.Writer) bool {
 		if msg, ok := <-opChan; ok {
 			outputBytes := bytes.NewBufferString(msg)

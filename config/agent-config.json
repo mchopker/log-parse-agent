@@ -1,37 +1,30 @@
 {
-    "server-url":"http://127.0.0.1:9997/api/logs/search/agent/info",
     "agent-host": "127.0.0.1",
     "agent-port": "9998",
-    "agent-info-post-interval-minutes": 15,
-    "users-supported": [
-        "mchopker",
-        "kmhaske"
-    ],
+    "server-url":"",
+    "agent-info-post-interval-minutes": 30,
+    "no-of-concurrent-req-allowed":2,
     "apps-supported": [
         {
 	    "app": "TEST-APP-1",
             "search-timeout-minute": 1,
             "pre-match-lines-max": 9,
             "post-match-lines-max": 9,
-            "search-duration": 30,
             "logs": [
-                "/logs/osm-phs.log",
-                "app-esc-debug.log.*"
+                "./log-samples/apache-access.log",
+                "./log-samples/sample-2023-*.log"
             ],
-            "active": true,
-            "allow-download": true
+            "active": true
         },
         {
             "app": "TEST-APP-2",
             "search-timeout-minute": 1,
-            "pre-match-lines-max": 9,
-            "post-match-lines-max": 9,
-            "search-duration": 30,
+            "pre-match-lines-max": 5,
+            "post-match-lines-max": 5,
             "logs": [
-                "/logs/osm-hc-webservices.log"
+                "./log-samples/sample-2023-01-01.log"
             ],
-            "active": true,
-            "allow-download": true
+            "active": true
         }
     ]
 }
