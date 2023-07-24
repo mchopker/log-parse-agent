@@ -1,10 +1,10 @@
 # log-parse-agent
 
-log-parse-agent is a golang program which runs in a Linux OS and allows grep and tail of local log files remotely via exposed API endpoints.
+log-parse-agent is a Golang program that runs in a Linux OS and allows the grep and tail of local log files remotely via exposed API endpoints.
 
 ## Description
 
-What application and log files to support is configured in the config file ./config/agent-config.json. 
+What application and log files to support are configured in the config file ./config/agent-config.json. 
 
 The agent also supports sharing this configuration periodically to a central server (refer [log-parse-ui](https://github.com/mchopker/log-parse-ui)) so that the central server knows what log files to request for grep and tail operations.
 
@@ -12,7 +12,7 @@ The agent also supports sharing this configuration periodically to a central ser
 
 ### Dependencies
 
-You would need golang 1.20 or above to build and run this program.
+You would need Golang 1.20 or above to build and run this program.
 
 ### Clone the project
 
@@ -31,9 +31,9 @@ $ ./log-parse-agent
 
 ### Usage
 
-The log-parse-agent program reads it config file ./config/agent-config.json on startup and allows grep and tail operations on the logs files configured via the API endpoints exposed. 
+The log-parse-agent program reads it config file ./config/agent-config.json on startup and allows grep and tail operations on the log files configured via the API endpoints exposed. 
 
-The following is the default configuration exist in the ./config/agent-config.json file:
+The following is the default configuration exists in the ./config/agent-config.json file:
 
 ```json
 
@@ -76,7 +76,7 @@ The following are the explanation of the various attributes allowed in the  ./co
 | :-------------------------------------- | :------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | agent-host                              | Mandatory            | The IPAddress of the agent machine where the API endpoints will be running. The default value is 127.0.0.1, change it to real IP if you want APIs to be called remotely.                                                                                                                                           |
 | agent-port                              | Mandatory            | The port where Agent will expose it's endpoints.                                                                                                                                                                                                                                                                   |
-| server-url                              | Optional             | The server url where the agent configuration will be posted periodically. Not needed if you do not want any central server/UI (refer [log-parse-ui](https://github.com/mchopker/log-parse-ui)) to become the client for this agent. If configured it should be in the form of http://SERVER-HOST:SERVER-PORT/api/logs/search/agent/info                                                                                                                                        |
+| server-url                              | Optional             | The server URL where the agent configuration will be posted periodically. Not needed if you do not want any central server/UI (refer [log-parse-ui](https://github.com/mchopker/log-parse-ui)) to become the client for this agent. If configured it should be in the form of http://SERVER-HOST:SERVER-PORT/api/logs/search/agent/info                                                                                                                                        |
 | agent-info-post-interval-minutes        | Optional             | This is used only when the "server-url" attribute is not blank. The interval in minutes at which Agent will post it's configuration to central server (refer [log-parse-ui](https://github.com/mchopker/log-parse-ui)), the default value is 30 minutes.                                                                                                                            |
 | no-of-concurrent-req-allowed            | Mandatory            | The no. of concurrent API requests allowed by the agent.                                                                                                                                                                                                                                                           |
 | apps-supported -> app                   | Mandatory            | The logical name you would want to give to a group of logs files you want this agent to be supported for remote grep/tail operations.                                                                                                                                                                              |
@@ -92,10 +92,10 @@ The following are the explanation of the various attributes allowed in the  ./co
 
 With the default configuration file (./config/agent-config.json) and sample logs provided (under ./log-samples/), once you start the log-parse-agent program, you can use curl or any other HTTP client to test various API endpoints.
 
-The following are some API endpoints calls and outputs you would see:
+The following are some API endpoint calls and outputs you would see:
 
 
-An API call to check agent configuration loaded by agent:
+An API call to check agent configuration loaded by the agent:
 ```
 $ curl -X GET http://127.0.0.1:9998/api/logs/search/info
 {"server-url":"","no-of-concurrent-req-allowed":2,"agent-host":"127.0.0.1","agent-port":"9998","agent-info-post-interval-minutes":30,"apps-supported":[{"app":"TEST-APP-1","search-timeout-minute":1,"pre-match-lines-max":9,"post-match-lines-max":9,"logs":["./log-samples/apache-access.log","./log-samples/sample-2023-01-01.log"],"active":true},{"app":"TEST-APP-2","search-timeout-minute":1,"pre-match-lines-max":5,"post-match-lines-max":5,"logs":["./log-samples/sample-2023-01-01.log"],"active":true}]}
@@ -136,7 +136,7 @@ tail./log-samples/apache-access.log
 176.222.58.254 - - [19/Dec/2020:17:46:29 +0100] "POST /index.php?option=com_contact&view=contact&id=1 HTTP/1.1" 200 188 "-" "Mozilla/5.0(Linux;Android10;Nokia7plus)AppleWebKit/537.36(KHTML,likeGecko)Chrome/84.0.4147.111MobileSafari/537.36" "-"
 ```
 
-An API call to cancel the operation triggered via previous grep/tail API call (note the input is the key string which was received as part of grep/tail operation earlier):
+An API call to cancel the operation triggered via the previous grep/tail API call (note the input is the key string which was received as part of the grep/tail operation earlier):
 ```
 $ curl -X POST http://127.0.0.1:9998/api/logs/command/cancel -H "Content-Type: multipart/form-data" -F 'cmd-key=tail./log-samples/apache-access.log'
 ```
